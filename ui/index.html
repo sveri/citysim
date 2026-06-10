@@ -126,16 +126,24 @@ let selectedPlot = null;  // {x, y, terrain, household_id}
 
 // --- WebSocket ---
 let ws;
+let wsAlive = false;
+
 function connectWS() {
   ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onopen = () => { wsAlive = true; };
   ws.onmessage = (e) => {
+    wsAlive = true;
     const msg = JSON.parse(e.data);
     updateClock(msg.tick, msg.sim_date);
     appendEvents(msg.events);
     fetchState();
   };
-  ws.onclose = () => setTimeout(connectWS, 2000);
+  ws.onclose = () => { wsAlive = false; setTimeout(connectWS, 2000); };
+  ws.onerror = () => { wsAlive = false; ws.close(); };
 }
+
+// Polling fallback: if WS is dead, poll every second
+setInterval(() => { if (!wsAlive) fetchState(); }, 1000);
 
 // --- Fetch full state ---
 async function fetchState() {

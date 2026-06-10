@@ -51,23 +51,22 @@ def advance_one_tick(session) -> tuple[int, str, list]:
 
 def _run_loop():
     while not _stop_event.is_set():
-        session = SessionLocal()
-        try:
-            world = session.query(WorldState).first()
-            if not world or not world.running:
-                session.close()
-                time.sleep(0.1)
-                continue
-            speed_ms = world.tick_speed_ms
-            session.close()
+        speed_ms = 100  # default; overwritten when running
 
-            session = SessionLocal()
-            tick, sim_date, events = advance_one_tick(session)
+        try:
+            with SessionLocal() as session:
+                world = session.query(WorldState).first()
+                if not world or not world.running:
+                    _stop_event.wait(0.1)
+                    continue
+                speed_ms = world.tick_speed_ms
+
+            with SessionLocal() as session:
+                tick, sim_date, events = advance_one_tick(session)
+
             _notify(tick, sim_date, events)
         except Exception as e:
             print(f"Tick error: {e}")
-        finally:
-            session.close()
 
         _stop_event.wait(speed_ms / 1000)
 
