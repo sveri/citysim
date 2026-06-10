@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>CitySim</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #1a1a2e; color: #e0e0e0; font-family: monospace; display: flex; height: 100vh; }
+
+    #sidebar {
+      width: 320px; min-width: 320px;
+      background: #16213e;
+      padding: 16px;
+      overflow-y: auto;
+      border-right: 1px solid #0f3460;
+    }
+
+    #sidebar h1 { font-size: 1.2rem; color: #e94560; margin-bottom: 8px; }
+    #clock { font-size: 0.85rem; color: #a0a0c0; margin-bottom: 16px; }
+    #clock span { color: #e0e0e0; }
+
+    .controls { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+    button {
+      background: #0f3460; border: 1px solid #e94560; color: #e0e0e0;
+      padding: 5px 12px; cursor: pointer; font-family: monospace; font-size: 0.8rem;
+      border-radius: 3px;
+    }
+    button:hover { background: #e94560; }
+    button.active { background: #e94560; }
+
+    label { font-size: 0.8rem; color: #a0a0c0; }
+    input[type=range] { width: 100%; margin: 4px 0 12px; }
+
+    #households h2 { font-size: 0.95rem; color: #e94560; margin-bottom: 8px; border-bottom: 1px solid #0f3460; padding-bottom: 4px; }
+
+    .household {
+      background: #0f3460; border-radius: 4px; padding: 10px; margin-bottom: 10px;
+    }
+    .household .hh-title { font-size: 0.85rem; color: #a0c0e0; margin-bottom: 6px; }
+    .person { font-size: 0.78rem; padding: 2px 0; border-bottom: 1px solid #16213e; }
+    .person:last-child { border: none; }
+    .person.dead { opacity: 0.4; text-decoration: line-through; }
+    .sex-m { color: #7eb8f7; }
+    .sex-f { color: #f7a1c4; }
+
+    #events {
+      margin-top: 16px;
+    }
+    #events h2 { font-size: 0.95rem; color: #e94560; margin-bottom: 8px; border-bottom: 1px solid #0f3460; padding-bottom: 4px; }
+    #event-log { font-size: 0.75rem; max-height: 180px; overflow-y: auto; }
+    .event-line { padding: 2px 0; border-bottom: 1px solid #0f3460; color: #c0c0d0; }
+    .event-birth { color: #7ef7a1; }
+    .event-death { color: #f77e7e; }
+
+    #map-area { flex: 1; display: flex; align-items: center; justify-content: center; padding: 20px; }
+    #grid-svg { max-width: 100%; max-height: 100%; }
+
+    .plot-grass { fill: #2d5a27; }
+    .plot-river { fill: #1a3a6e; }
+    .plot-road  { fill: #4a4a4a; }
+    .plot-occupied { fill: #8b6914; }
+    .plot-hover { opacity: 0.7; cursor: pointer; }
+    .plot-border { stroke: #1a1a2e; stroke-width: 0.5; }
+
+    .status-dot {
+      display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+      background: #555; margin-right: 6px; vertical-align: middle;
+    }
+    .status-dot.running { background: #7ef7a1; box-shadow: 0 0 6px #7ef7a1; }
+  </style>
+</head>
+<body>
+
+<div id="sidebar">
+  <h1>&#9632; CitySim</h1>
+  <div id="clock">
+    <span class="status-dot" id="status-dot"></span>
+    Tick <span id="tick">—</span> &nbsp;|&nbsp; <span id="sim-date">—</span>
+  </div>
+
+  <div class="controls">
+    <button id="btn-start">&#9654; Start</button>
+    <button id="btn-pause">&#10074;&#10074; Pause</button>
+    <button id="btn-step">&#9654;| Step</button>
+  </div>
+
+  <label>Speed: <span id="speed-label">500ms / tick</span></label>
+  <input type="range" id="speed-slider" min="100" max="5000" step="100" value="500">
+
+  <div id="households">
+    <h2>Households</h2>
+    <div id="hh-list"></div>
+  </div>
+
+  <div id="events">
+    <h2>Event Log</h2>
+    <div id="event-log"></div>
+  </div>
+</div>
+
+<div id="map-area">
+  <svg id="grid-svg" viewBox="0 0 300 300" xmlns="http://www.w3.org/2000/svg"></svg>
+</div>
+
+<script>
+const CELL = 28;
+const GAP = 2;
+let state = null;
+
+// --- WebSocket ---
+let ws;
+function connectWS() {
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    updateClock(msg.tick, msg.sim_date);
+    appendEvents(msg.events);
+    fetchState();
+  };
+  ws.onclose = () => setTimeout(connectWS, 2000);
+}
+
+// --- Fetch full state ---
+async function fetchState() {
+  const r = await fetch('/api/state');
+  state = await r.json();
+  render(state);
+}
+
+// --- Render ---
+function render(s) {
+  updateClock(s.tick, s.sim_date, s.running);
+  renderGrid(s.plots);
+  renderHouseholds(s.households, s.sim_date);
+}
+
+function updateClock(tick, simDate, running) {
+  document.getElementById('tick').textContent = tick;
+  document.getElementById('sim-date').textContent = simDate;
+  const dot = document.getElementById('status-dot');
+  if (running !== undefined) dot.className = 'status-dot' + (running ? ' running' : '');
+}
+
+function renderGrid(plots) {
+  const svg = document.getElementById('grid-svg');
+  svg.innerHTML = '';
+
+  // find grid bounds
+  let maxX = 0, maxY = 0;
+  plots.forEach(p => { maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); });
+  const w = (maxX + 1) * (CELL + GAP);
+  const h = (maxY + 1) * (CELL + GAP);
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+
+  plots.forEach(p => {
+    let cls = `plot-${p.terrain}`;
+    if (p.household_id) cls = 'plot-occupied';
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('x', p.x * (CELL + GAP));
+    rect.setAttribute('y', (maxY - p.y) * (CELL + GAP)); // flip Y so river is at bottom
+    rect.setAttribute('width', CELL);
+    rect.setAttribute('height', CELL);
+    rect.setAttribute('class', `${cls} plot-border plot-hover`);
+    rect.setAttribute('data-id', p.id);
+    rect.setAttribute('data-x', p.x);
+    rect.setAttribute('data-y', p.y);
+    rect.setAttribute('data-terrain', p.terrain);
+    rect.addEventListener('mouseenter', showTooltip);
+    svg.appendChild(rect);
+
+    if (p.household_id) {
+      const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      t.setAttribute('x', p.x * (CELL + GAP) + CELL / 2);
+      t.setAttribute('y', (maxY - p.y) * (CELL + GAP) + CELL / 2 + 5);
+      t.setAttribute('text-anchor', 'middle');
+      t.setAttribute('font-size', '14');
+      t.setAttribute('fill', '#ffe066');
+      t.textContent = '🏠';
+      svg.appendChild(t);
+    }
+  });
+}
+
+function renderHouseholds(households, simDate) {
+  const list = document.getElementById('hh-list');
+  list.innerHTML = '';
+  households.forEach(h => {
+    const div = document.createElement('div');
+    div.className = 'household';
+    const living = h.members.filter(m => m.alive);
+    const title = document.createElement('div');
+    title.className = 'hh-title';
+    title.textContent = `Household #${h.id} — plot ${h.plot_id} — ${living.length} living`;
+    div.appendChild(title);
+    h.members.forEach(m => {
+      const p = document.createElement('div');
+      p.className = `person ${m.alive ? '' : 'dead'} sex-${m.sex.toLowerCase()}`;
+      const icon = m.sex === 'M' ? '♂' : '♀';
+      p.textContent = `${icon} ${m.name}, age ${m.age}`;
+      div.appendChild(p);
+    });
+    list.appendChild(div);
+  });
+}
+
+function appendEvents(events) {
+  if (!events || !events.length) return;
+  const log = document.getElementById('event-log');
+  events.forEach(ev => {
+    const d = document.createElement('div');
+    d.className = `event-line event-${ev.type}`;
+    const icon = ev.type === 'birth' ? '👶' : '✝';
+    d.textContent = `${icon} ${ev.name}${ev.age !== undefined ? `, age ${ev.age}` : ''} (${ev.type})`;
+    log.prepend(d);
+  });
+  // cap log at 100 lines
+  while (log.children.length > 100) log.removeChild(log.lastChild);
+}
+
+function showTooltip(e) {
+  const r = e.target;
+  // Could add a proper tooltip; for now just title attr
+  r.setAttribute('title', `(${r.dataset.x},${r.dataset.y}) ${r.dataset.terrain}`);
+}
+
+// --- Controls ---
+document.getElementById('btn-start').addEventListener('click', async () => {
+  await fetch('/api/sim/start', { method: 'POST' });
+  fetchState();
+});
+document.getElementById('btn-pause').addEventListener('click', async () => {
+  await fetch('/api/sim/pause', { method: 'POST' });
+  fetchState();
+});
+document.getElementById('btn-step').addEventListener('click', async () => {
+  const r = await fetch('/api/sim/tick', { method: 'POST' });
+  const data = await r.json();
+  appendEvents(data.events);
+  fetchState();
+});
+
+const slider = document.getElementById('speed-slider');
+const speedLabel = document.getElementById('speed-label');
+slider.addEventListener('input', () => {
+  speedLabel.textContent = `${slider.value}ms / tick`;
+});
+slider.addEventListener('change', async () => {
+  await fetch('/api/sim/speed', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ms: parseInt(slider.value) }),
+  });
+});
+
+// --- Boot ---
+connectWS();
+fetchState();
+</script>
+</body>
+</html>
