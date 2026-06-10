@@ -164,7 +164,7 @@ function updateClock(tick, simDate, running, tickSpeedMs) {
   document.getElementById('sim-date').textContent = simDate;
   const dot = document.getElementById('status-dot');
   if (running !== undefined) dot.className = 'status-dot' + (running ? ' running' : '');
-  if (tickSpeedMs !== undefined) {
+  if (tickSpeedMs !== undefined && !sliderActive) {
     slider.value = tickSpeedMs;
     speedLabel.textContent = `${tickSpeedMs}ms / tick`;
   }
@@ -364,10 +364,15 @@ document.getElementById('btn-step').addEventListener('click', async () => {
 
 const slider = document.getElementById('speed-slider');
 const speedLabel = document.getElementById('speed-label');
+let sliderActive = false;
+
+slider.addEventListener('mousedown', () => { sliderActive = true; });
+slider.addEventListener('touchstart', () => { sliderActive = true; });
 slider.addEventListener('input', () => {
   speedLabel.textContent = `${slider.value}ms / tick`;
 });
 slider.addEventListener('change', async () => {
+  sliderActive = false;
   await fetch('/api/sim/speed', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
