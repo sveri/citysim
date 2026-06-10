@@ -65,8 +65,9 @@ def _run_loop():
                 tick, sim_date, events = advance_one_tick(session)
 
             _notify(tick, sim_date, events)
-        except Exception as e:
-            print(f"Tick error: {e}")
+        except Exception:
+            import traceback
+            traceback.print_exc()
 
         _stop_event.wait(speed_ms / 1000)
 

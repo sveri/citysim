@@ -154,16 +154,20 @@ async function fetchState() {
 
 // --- Render ---
 function render(s) {
-  updateClock(s.tick, s.sim_date, s.running);
+  updateClock(s.tick, s.sim_date, s.running, s.tick_speed_ms);
   renderGrid(s.plots);
   renderHouseholds(s.households, s.sim_date);
 }
 
-function updateClock(tick, simDate, running) {
+function updateClock(tick, simDate, running, tickSpeedMs) {
   document.getElementById('tick').textContent = tick;
   document.getElementById('sim-date').textContent = simDate;
   const dot = document.getElementById('status-dot');
   if (running !== undefined) dot.className = 'status-dot' + (running ? ' running' : '');
+  if (tickSpeedMs !== undefined) {
+    slider.value = tickSpeedMs;
+    speedLabel.textContent = `${tickSpeedMs}ms / tick`;
+  }
 }
 
 function renderGrid(plots) {
