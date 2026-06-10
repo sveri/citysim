@@ -2,13 +2,14 @@ import asyncio
 from fastapi import FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from api.routes import state, control
+from api.routes import state, control, build
 from api import ws as ws_hub
 
 app = FastAPI(title="CitySim")
 
 app.include_router(state.router)
 app.include_router(control.router)
+app.include_router(build.router)
 
 app.mount("/ui", StaticFiles(directory="ui"), name="ui")
 

@@ -57,10 +57,20 @@
 
     .plot-grass { fill: #2d5a27; }
     .plot-river { fill: #1a3a6e; }
-    .plot-road  { fill: #4a4a4a; }
+    .plot-road  { fill: #3a3a3a; }
     .plot-occupied { fill: #8b6914; }
-    .plot-hover { opacity: 0.7; cursor: pointer; }
+    .plot-hover { cursor: pointer; }
+    .plot-hover:hover { opacity: 0.75; }
     .plot-border { stroke: #1a1a2e; stroke-width: 0.5; }
+    .plot-selected { stroke: #ffe066 !important; stroke-width: 2 !important; }
+
+    #plot-panel {
+      margin-top: 12px; background: #0f3460; border-radius: 4px;
+      padding: 10px; font-size: 0.82rem; display: none;
+    }
+    #plot-panel h2 { font-size: 0.9rem; color: #e94560; margin-bottom: 8px; border-bottom: 1px solid #1a3a6e; padding-bottom: 4px; }
+    #plot-panel .plot-info { color: #a0c0e0; margin-bottom: 8px; }
+    #plot-panel .plot-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 
     .status-dot {
       display: inline-block; width: 8px; height: 8px; border-radius: 50%;
@@ -87,6 +97,12 @@
   <label>Speed: <span id="speed-label">500ms / tick</span></label>
   <input type="range" id="speed-slider" min="100" max="5000" step="100" value="500">
 
+  <div id="plot-panel">
+    <h2>Selected Plot</h2>
+    <div class="plot-info" id="plot-info"></div>
+    <div class="plot-actions" id="plot-actions"></div>
+  </div>
+
   <div id="households">
     <h2>Households</h2>
     <div id="hh-list"></div>
@@ -106,6 +122,7 @@
 const CELL = 28;
 const GAP = 2;
 let state = null;
+let selectedPlot = null;  // {x, y, terrain, household_id}
 
 // --- WebSocket ---
 let ws;
@@ -145,40 +162,141 @@ function renderGrid(plots) {
   const svg = document.getElementById('grid-svg');
   svg.innerHTML = '';
 
-  // find grid bounds
+  // Build lookup for road-neighbor detection
+  const byXY = {};
+  plots.forEach(p => { byXY[`${p.x},${p.y}`] = p; });
+
   let maxX = 0, maxY = 0;
   plots.forEach(p => { maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); });
   const w = (maxX + 1) * (CELL + GAP);
   const h = (maxY + 1) * (CELL + GAP);
   svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
 
+  const isRoad = (x, y) => {
+    const p = byXY[`${x},${y}`];
+    return p && (p.terrain === 'road' || p.household_id);
+  };
+
   plots.forEach(p => {
     let cls = `plot-${p.terrain}`;
     if (p.household_id) cls = 'plot-occupied';
+
+    const px = p.x * (CELL + GAP);
+    const py = (maxY - p.y) * (CELL + GAP);
+
     const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    rect.setAttribute('x', p.x * (CELL + GAP));
-    rect.setAttribute('y', (maxY - p.y) * (CELL + GAP)); // flip Y so river is at bottom
+    rect.setAttribute('x', px);
+    rect.setAttribute('y', py);
     rect.setAttribute('width', CELL);
     rect.setAttribute('height', CELL);
-    rect.setAttribute('class', `${cls} plot-border plot-hover`);
-    rect.setAttribute('data-id', p.id);
+    let rectCls = `${cls} plot-border plot-hover`;
+    if (selectedPlot && selectedPlot.x === p.x && selectedPlot.y === p.y) {
+      rectCls += ' plot-selected';
+    }
+    rect.setAttribute('class', rectCls);
     rect.setAttribute('data-x', p.x);
     rect.setAttribute('data-y', p.y);
     rect.setAttribute('data-terrain', p.terrain);
-    rect.addEventListener('mouseenter', showTooltip);
+    rect.setAttribute('data-hid', p.household_id || '');
+    rect.addEventListener('click', onPlotClick);
     svg.appendChild(rect);
 
+    // Road center-line dashes
+    if (p.terrain === 'road') {
+      const cx = px + CELL / 2;
+      const cy = py + CELL / 2;
+      const hasH = isRoad(p.x - 1, p.y) || isRoad(p.x + 1, p.y);
+      const hasV = isRoad(p.x, p.y - 1) || isRoad(p.x, p.y + 1);
+      const drawH = hasH || !hasV;
+      const drawV = hasV || !hasH;
+
+      if (drawH) {
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', px + 2); line.setAttribute('y1', cy);
+        line.setAttribute('x2', px + CELL - 2); line.setAttribute('y2', cy);
+        line.setAttribute('stroke', '#ffe066');
+        line.setAttribute('stroke-width', '1');
+        line.setAttribute('stroke-dasharray', '3 3');
+        line.setAttribute('pointer-events', 'none');
+        svg.appendChild(line);
+      }
+      if (drawV) {
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', cx); line.setAttribute('y1', py + 2);
+        line.setAttribute('x2', cx); line.setAttribute('y2', py + CELL - 2);
+        line.setAttribute('stroke', '#ffe066');
+        line.setAttribute('stroke-width', '1');
+        line.setAttribute('stroke-dasharray', '3 3');
+        line.setAttribute('pointer-events', 'none');
+        svg.appendChild(line);
+      }
+    }
+
+    // House icon
     if (p.household_id) {
       const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      t.setAttribute('x', p.x * (CELL + GAP) + CELL / 2);
-      t.setAttribute('y', (maxY - p.y) * (CELL + GAP) + CELL / 2 + 5);
+      t.setAttribute('x', px + CELL / 2);
+      t.setAttribute('y', py + CELL / 2 + 5);
       t.setAttribute('text-anchor', 'middle');
       t.setAttribute('font-size', '14');
       t.setAttribute('fill', '#ffe066');
+      t.setAttribute('pointer-events', 'none');
       t.textContent = '🏠';
       svg.appendChild(t);
     }
   });
+}
+
+function onPlotClick(e) {
+  const el = e.target;
+  const x = parseInt(el.dataset.x);
+  const y = parseInt(el.dataset.y);
+  const terrain = el.dataset.terrain;
+  const hid = el.dataset.hid;
+
+  selectedPlot = { x, y, terrain, household_id: hid || null };
+  showPlotPanel(selectedPlot);
+  renderGrid(state.plots); // re-render to update selection highlight
+}
+
+function showPlotPanel(p) {
+  const panel = document.getElementById('plot-panel');
+  const info = document.getElementById('plot-info');
+  const actions = document.getElementById('plot-actions');
+
+  info.textContent = `(${p.x}, ${p.y})  terrain: ${p.terrain}${p.household_id ? '  🏠 HH#' + p.household_id : ''}`;
+  actions.innerHTML = '';
+  panel.style.display = 'block';
+
+  if (p.terrain === 'grass') {
+    const btn = document.createElement('button');
+    btn.textContent = '🛣 Build Road';
+    btn.addEventListener('click', async () => {
+      await fetch('/api/build/road', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ x: p.x, y: p.y }),
+      });
+      selectedPlot = null;
+      panel.style.display = 'none';
+      fetchState();
+    });
+    actions.appendChild(btn);
+  } else if (p.terrain === 'road') {
+    const btn = document.createElement('button');
+    btn.textContent = '✕ Remove Road';
+    btn.addEventListener('click', async () => {
+      await fetch('/api/build/road', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ x: p.x, y: p.y }),
+      });
+      selectedPlot = null;
+      panel.style.display = 'none';
+      fetchState();
+    });
+    actions.appendChild(btn);
+  }
 }
 
 function renderHouseholds(households, simDate) {
@@ -213,14 +331,7 @@ function appendEvents(events) {
     d.textContent = `${icon} ${ev.name}${ev.age !== undefined ? `, age ${ev.age}` : ''} (${ev.type})`;
     log.prepend(d);
   });
-  // cap log at 100 lines
   while (log.children.length > 100) log.removeChild(log.lastChild);
-}
-
-function showTooltip(e) {
-  const r = e.target;
-  // Could add a proper tooltip; for now just title attr
-  r.setAttribute('title', `(${r.dataset.x},${r.dataset.y}) ${r.dataset.terrain}`);
 }
 
 // --- Controls ---

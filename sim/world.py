@@ -29,6 +29,13 @@ def seed_world():
                 session.flush()
                 plots[(x, y)] = p
 
+        # Seed initial road network: vertical main street (x=5, y=1..9)
+        # + horizontal cross street (y=5, x=1..9), excluding household plot (5,5)
+        for y in range(1, GRID_H):
+            plots[(5, y)].terrain = "road"
+        for x in range(1, GRID_W):
+            plots[(x, 5)].terrain = "road"
+
         # Place one founding household on plot (5, 5)
         start_plot = plots[(5, 5)]
         last_name = random.choice(GERMAN_LAST_NAMES)
