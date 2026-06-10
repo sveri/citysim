@@ -36,8 +36,8 @@ def seed_world():
         for x in range(1, GRID_W):
             plots[(x, 5)].terrain = "road"
 
-        # Place one founding household on plot (5, 5)
-        start_plot = plots[(5, 5)]
+        # Place one founding household on plot (6, 6) — grass, adjacent to road cross
+        start_plot = plots[(6, 6)]
         last_name = random.choice(GERMAN_LAST_NAMES)
         household = Household(plot_id=start_plot.id)
         session.add(household)
